@@ -1,0 +1,9 @@
+black
+faiss-cpu
+fleet-context
+langchain
+langsmith
+mypy
+openai
+pandas
+ruff
