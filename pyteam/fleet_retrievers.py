@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import warnings
 from typing import Optional
 
@@ -17,6 +18,7 @@ from langchain.vectorstores.faiss import FAISS
 class FleetContextRetrieverMachine:
     """A class to create retrievers from `fleet-context` embeddings."""
 
+    library_name: str
     vectorstore: FAISS
     vecstore_retriever: VectorStoreRetriever
     parent_retriever: MultiVectorRetriever
@@ -82,12 +84,15 @@ class FleetContextRetrieverMachine:
     def __init__(
         self,
         df: pd.DataFrame,
+        library_name: str,
         docstore: Optional[BaseStore] = None,
         parent_doc_sep: str = "\n",
         vectorstore_kwargs: Optional[dict] = None,
         vecstore_retriever_kwargs: Optional[dict] = None,
         parent_retriever_kwargs: Optional[dict] = None,
     ):
+        self.library_name = library_name
+
         joined_df = self._join_metadata(df)
 
         vectorstore_kwargs = vectorstore_kwargs or {}
@@ -111,9 +116,14 @@ class FleetContextRetrieverMachine:
         return self.vecstore_retriever, self.parent_retriever
 
     @classmethod
-    def from_df(cls, df: pd.DataFrame, **kwargs) -> FleetContextRetrieverMachine:
+    def from_df(
+        cls,
+        df: pd.DataFrame,
+        library_name: str,
+        **kwargs,
+    ) -> FleetContextRetrieverMachine:
         """Create FleetContextRetrieverMachine from df."""
-        return cls(df, **kwargs)
+        return cls(df, library_name=library_name, **kwargs)
 
     @classmethod
     def from_library(
@@ -132,21 +142,30 @@ class FleetContextRetrieverMachine:
                     "`download_kwargs` not yet implemented in `context`; ignoring.",
                 )
             library_df = download_embeddings(library_name)
-        return cls(library_df, **kwargs)
+        return cls(library_df, library_name=library_name, **kwargs)
 
     @classmethod
     def from_parquet(cls, filename: str, **kwargs) -> FleetContextRetrieverMachine:
         """Create FleetContextRetrieverMachine from parquet filename."""
-        return cls(pd.read_parquet(filename), **kwargs)
+        filename_pat = re.compile("libraries_(.*).parquet")
+
+        search_result = filename_pat.search(filename)
+        if search_result is None:
+            raise ValueError(
+                f"filename {filename} does not match pattern {filename_pat}",
+            )
+        library_name = search_result.group(1)
+        return cls(pd.read_parquet(filename), library_name=library_name, **kwargs)
 
     @classmethod
     def retrievers_from_df(
         cls,
         df: pd.DataFrame,
+        library_name: str,
         **kwargs,
     ) -> tuple[VectorStoreRetriever, MultiVectorRetriever]:
         """Create retrievers from df."""
-        return cls.from_df(df, **kwargs).retrievers()
+        return cls.from_df(df, library_name=library_name, **kwargs).retrievers()
 
     @classmethod
     def retrievers_from_library(
