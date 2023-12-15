@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+from typing import Optional
+
+import pandas as pd
 from langchain.llms.base import BaseLLM
+from langchain.schema.document import Document
 from langchain.schema.runnable import Runnable
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 
-from pyteam.fleet_retrievers import FleetContextRetrieverMachine
+from pyteam.fleet_retrievers import MultiVectorFleetRetriever
 
 
 class FleetBackedSpecialist:
-    retriever_machine: FleetContextRetrieverMachine
+    retriever: MultiVectorFleetRetriever
     prompt: ChatPromptTemplate
     specialist: Runnable
 
@@ -35,18 +39,72 @@ class FleetBackedSpecialist:
         ],
     )
 
-    def __init__(self, retriever_machine: FleetContextRetrieverMachine, llm: BaseLLM):
-        self.retriever_machine = retriever_machine
+    @staticmethod
+    def _join_docs(docs: list[Document], sep: str = "\n\n") -> str:
+        return sep.join(d.page_content for d in docs)
+
+    def __init__(
+        self,
+        library_name: str,
+        retriever: MultiVectorFleetRetriever,
+        llm: BaseLLM,
+    ):
+        self.retriever = retriever
         self.prompt = self._prompt_template.partial(
-            library=retriever_machine.library_name,
+            library=library_name,
         )
         self.specialist = (
             {
                 "question": RunnablePassthrough(),
-                "context": self.retriever_machine.parent_retriever
-                | (lambda docs: "\n\n".join(d.page_content for d in docs)),
+                "context": self.retriever | (lambda docs: self._join_docs(docs)),
             }
             | self.prompt
             | llm
             | StrOutputParser()
         )
+
+    @classmethod
+    def from_df(
+        cls,
+        df: pd.DataFrame,
+        library_name: str,
+        llm: BaseLLM,
+        **kwargs,
+    ) -> FleetBackedSpecialist:
+        retriever = MultiVectorFleetRetriever.from_df(
+            df,
+            library_name,
+            **kwargs,
+        )
+        return cls(library_name, retriever, llm)
+
+    @classmethod
+    def from_library(
+        cls,
+        library_name: str,
+        llm: BaseLLM,
+        download_kwargs: Optional[dict] = None,
+        **kwargs,
+    ) -> FleetBackedSpecialist:
+        retriever = MultiVectorFleetRetriever.from_library(
+            library_name,
+            download_kwargs,
+            **kwargs,
+        )
+        return cls(library_name, retriever, llm)
+
+    @classmethod
+    def from_parquet(
+        cls,
+        parquet_path,
+        llm: BaseLLM,
+        **kwargs,
+    ) -> FleetBackedSpecialist:
+        retriever = MultiVectorFleetRetriever.from_parquet(
+            parquet_path,
+            **kwargs,
+        )
+        library_name = MultiVectorFleetRetriever.get_library_name_from_filename(
+            parquet_path,
+        )
+        return cls(library_name, retriever, llm)

@@ -1,7 +1,7 @@
-from fleet_retrievers import FleetContextRetrieverMachine
+from fleet_retrievers import MultiVectorFleetRetriever
 
 __version__ = "0.0.1"
 
 __all__ = [
-    "FleetContextRetrieverMachine",
+    "MultiVectorFleetRetriever",
 ]
