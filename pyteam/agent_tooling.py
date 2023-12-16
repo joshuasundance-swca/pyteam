@@ -2,11 +2,15 @@ from typing import Optional
 
 from langchain.agents import AgentExecutor
 from langchain.agents import AgentType, initialize_agent
-from langchain.agents.tools import Tool
+from langchain.agents.tools import BaseTool
 from langchain.llms.base import BaseLLM
 from langchain.memory import ConversationBufferMemory
 from langchain.prompts import MessagesPlaceholder
 from langchain.prompts.chat import ChatPromptTemplate
+from langchain.pydantic_v1 import BaseModel
+from langchain.schema import StrOutputParser
+from langchain.schema.runnable import Runnable
+from langchain.tools import StructuredTool
 
 from pyteam.fleet_specialists import FleetBackedSpecialist
 
@@ -36,89 +40,90 @@ prompt = ChatPromptTemplate.from_messages(
 )
 
 
-class SpecialistBackedAgent:
-    tools: list[Tool]
-    llm: BaseLLM
-    cache_dir: str = "fleet-cache"
-    agent: AgentExecutor
+class SpecialistRequest(BaseModel):
+    library_name: str
+    request: str
 
-    def _summon_specialist(self, library_name: str) -> str:
-        tool_name = f"ask-{library_name}"
-        try:
+
+class SpecialistBackedAgent:
+    tools: list[BaseTool]
+    llm: BaseLLM
+    agent: AgentExecutor
+    memory: ConversationBufferMemory
+    cache_dir: str = "fleet-cache"
+    agent_type: AgentType = AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION
+    specialists: dict[str, Runnable] = {}
+
+    def _get_specialist(self, library_name: str) -> None:
+        if library_name not in self.specialists:
             specialist = FleetBackedSpecialist.from_library(
                 library_name,
                 self.llm,
                 dict(cache_dir=self.cache_dir),
             ).specialist
+            self.specialists[library_name] = specialist
+
+    def _ask_specialist(self, library_name: str, request: str) -> str:
+        try:
+            self._get_specialist(library_name)
+            ch = self.specialists[library_name] | StrOutputParser()
+            return ch.invoke(request)
         except ValueError:
-            return (
-                f"Sorry, no specialist is available for {library_name}. "
-                "Double-check the library name and try again, "
-                "or try a different library."
+            p = ChatPromptTemplate.from_messages(
+                [
+                    (
+                        "system",
+                        "You are a masterful software engineer who is very familiar with Python. "
+                        "You were called in because no specialist is available for the library `{library}`. "
+                        "Help the user with their request.",
+                    ),
+                    ("human", "{question}"),
+                ],
             )
-        msg = (
-            f"Success! You may now use the `{tool_name}` tool "
-            f"to ask the {library_name} specialist for help."
-        )
-        tool = Tool.from_function(
-            specialist.invoke,
-            name=tool_name,
-            description=f"Ask the {library_name} specialist for help.",
-        )
-        self.tools.append(tool)
-        self.agent = self.get_agent_executor(self.llm, self.agent.memory)
-        return msg
+            ch = p.partial(library=library_name) | self.llm
+            return (ch | StrOutputParser()).invoke(dict(question=request))
 
     def get_agent_executor(
         self,
-        llm: BaseLLM,
-        memory,
-        agent_type: AgentType = AgentType.OPENAI_FUNCTIONS,
     ) -> AgentExecutor:
         return initialize_agent(
             self.tools,
-            llm,
-            agent=agent_type,
+            self.llm,
+            agent=self.agent_type,
             verbose=True,
             agent_kwargs={
-                "extra_prompt_messages": [MessagesPlaceholder(variable_name="memory")],
+                "extra_prompt_messages": [
+                    MessagesPlaceholder(variable_name="memory"),
+                ],
             },
-            memory=memory,
+            memory=self.memory,
             handle_parsing_errors=True,
             prompt=prompt,
-            # return_intermediate_steps=True,
         )
 
     def __init__(self, llm: BaseLLM, initial_libraries: Optional[list[str]] = None):
         self.llm = llm
-
+        self.memory = ConversationBufferMemory()
         self.tools = [
-            Tool.from_function(
-                lambda x: x,
-                name="submit-final-code",
-                description="This is the final step. "
-                "Submit your FINAL, COMPLETE, SYNTHESIZED "
-                "code to the user who requested it. "
-                "Never submit code without getting input from relevant team members.",
-                return_direct=True,
-            ),
-            Tool.from_function(
-                self._summon_specialist,
-                name="hire-specialist",
-                description="Hire a specialist for a specific Python library.",
+            StructuredTool.from_function(
+                self._ask_specialist,
+                name="ask-specialist",
+                description="Ask a specialist for help with a specific Python library.",
+                args_schema=SpecialistRequest,
             ),
         ]
 
-        self.agent = self.get_agent_executor(
-            llm,
-            ConversationBufferMemory(memory_key="memory", return_messages=True),
-        )
-
         if initial_libraries:
             for library in initial_libraries:
-                self._summon_specialist(library)
+                self._get_specialist(library)
+
+        self.agent = self.get_agent_executor()
+
+    def __call__(self, instructions: str) -> dict[str, str]:
+        return self.agent(instructions)
 
 
+# # llm = ...
 # a = SpecialistBackedAgent(llm)  #, ['langchain', 'pandas'])
 #
 # instructions = """
@@ -131,6 +136,8 @@ class SpecialistBackedAgent:
 # langchain (have your langchain assistant write this)
 # 3. make a faiss vectorstore from the 'text' column. put 'id' and 'name' in the metadata
 #
+#
+# develop the script step by step with the help of relevant experts. it may be tricky.
 #
 # if you do this right, I'll give you $200! :)
 # """.strip()
