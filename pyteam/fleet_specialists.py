@@ -12,7 +12,7 @@ from langchain.prompts import MessagesPlaceholder
 from langchain.schema.document import Document
 from langchain.schema.runnable import Runnable
 
-from fleet_retrievers import MultiVectorFleetRetriever
+from pyteam.fleet_retrievers import MultiVectorFleetRetriever
 
 
 class FleetBackedSpecialist:

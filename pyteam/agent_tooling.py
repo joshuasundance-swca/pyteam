@@ -3,6 +3,7 @@ from typing import Optional
 from langchain.agents import AgentExecutor
 from langchain.agents import AgentType, initialize_agent
 from langchain.agents.tools import BaseTool
+from langchain.callbacks.manager import Callbacks
 from langchain.llms.base import BaseLLM
 from langchain.memory import ConversationBufferMemory
 from langchain.prompts import MessagesPlaceholder
@@ -11,7 +12,7 @@ from langchain.pydantic_v1 import BaseModel
 from langchain.schema.runnable import Runnable
 from langchain.tools import StructuredTool
 
-from fleet_specialists import FleetBackedSpecialist
+from pyteam.fleet_specialists import FleetBackedSpecialist
 
 _system_message_template = (
     "You are in charge of a Python development project. "
@@ -68,11 +69,17 @@ class SpecialistBackedAgent:
             ).specialist
             self.specialists[library_name] = specialist
 
-    def _ask_specialist(self, library_name: str, request: str) -> str:
+    def _ask_specialist(
+        self,
+        library_name: str,
+        request: str,
+        callbacks: Callbacks = None,
+    ) -> str:
+        config = dict(run_name=f"ask-{library_name}-specialist", callbacks=callbacks)
         try:
             self._get_specialist(library_name)
             ch = self.specialists[library_name]
-            return ch.invoke(request)
+            return ch.with_config(config).invoke(request)
         except ValueError:
             p = ChatPromptTemplate.from_messages(
                 [
@@ -86,7 +93,7 @@ class SpecialistBackedAgent:
                 ],
             )
             ch = p.partial(library=library_name) | self.llm
-            return ch.invoke(dict(question=request))
+            return ch.with_config(config).invoke(dict(question=request))
 
     def get_agent_executor(
         self,

@@ -1,4 +1,4 @@
-from fleet_retrievers import MultiVectorFleetRetriever
+from pyteam.fleet_retrievers import MultiVectorFleetRetriever
 
 __version__ = "0.0.1"
 
